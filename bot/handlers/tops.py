@@ -26,6 +26,9 @@ def format_top(rows, title_map: dict[int, str | None], value_attr: str, settings
 
 @router.message(Command("top_balance"))
 async def cmd_top_balance(message: Message, db: Database, settings: Settings) -> None:
+    if message.chat.type != "private":
+        await message.answer("Топ доступен только в ЛС. Напиши боту в личку.")
+        return
     rows = await db.top_by_balance(10)
     title_map = await db.get_active_title_ids([u.user_id for u in rows])
     text = "🏆 Топ по балансу:\n" + format_top(rows, title_map, "balance", settings)
@@ -34,6 +37,9 @@ async def cmd_top_balance(message: Message, db: Database, settings: Settings) ->
 
 @router.message(Command("top_lost"))
 async def cmd_top_lost(message: Message, db: Database, settings: Settings) -> None:
+    if message.chat.type != "private":
+        await message.answer("Топ доступен только в ЛС. Напиши боту в личку.")
+        return
     rows = await db.top_by_lost(10)
     title_map = await db.get_active_title_ids([u.user_id for u in rows])
     text = "📉 Топ по проигрышам:\n" + format_top(rows, title_map, "total_lost", settings)
