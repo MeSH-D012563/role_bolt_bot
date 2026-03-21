@@ -217,7 +217,7 @@ class Settings:
         ShopItem(
             id="title_wanderer",
             name="Титул: Странник",
-            price=400,
+            price=500,
             kind="title",
             description="Уникальный титул, доступен только одному игроку.",
             title_text="Странник",
@@ -225,7 +225,7 @@ class Settings:
         ShopItem(
             id="title_pioneer",
             name="Титул: Пионер",
-            price=550,
+            price=700,
             kind="title",
             description="Уникальный титул, доступен только одному игроку.",
             title_text="Пионер",
@@ -233,7 +233,7 @@ class Settings:
         ShopItem(
             id="title_hawk",
             name="Титул: Ястреб",
-            price=700,
+            price=850,
             kind="title",
             description="Уникальный титул, доступен только одному игроку.",
             title_text="Ястреб",
@@ -241,7 +241,7 @@ class Settings:
         ShopItem(
             id="title_shadow",
             name="Титул: Тень",
-            price=850,
+            price=1000,
             kind="title",
             description="Уникальный титул, доступен только одному игроку.",
             title_text="Тень",
@@ -249,7 +249,7 @@ class Settings:
         ShopItem(
             id="title_marauder",
             name="Титул: Мародер",
-            price=1000,
+            price=1200,
             kind="title",
             description="Уникальный титул, доступен только одному игроку.",
             title_text="Мародер",
@@ -257,7 +257,7 @@ class Settings:
         ShopItem(
             id="title_archon",
             name="Титул: Архонт",
-            price=1300,
+            price=1550,
             kind="title",
             description="Уникальный титул, доступен только одному игроку.",
             title_text="Архонт",
@@ -265,22 +265,67 @@ class Settings:
         ShopItem(
             id="title_legend",
             name="Титул: Легенда",
-            price=1400,
+            price=1700,
             kind="title",
             description="Редкий уникальный титул, доступен только одному игроку.",
             title_text="Легенда",
+        ),
+        ShopItem(
+            id="title_oracle",
+            name="Титул: Оракул",
+            price=1950,
+            kind="title",
+            description="Редкий уникальный титул, доступен только одному игроку.",
+            title_text="Оракул",
+        ),
+        ShopItem(
+            id="title_phantom",
+            name="Титул: Фантом",
+            price=2250,
+            kind="title",
+            description="Редкий уникальный титул, доступен только одному игроку.",
+            title_text="Фантом",
+        ),
+        ShopItem(
+            id="title_overlord",
+            name="Титул: Владыка",
+            price=2550,
+            kind="title",
+            description="Редкий уникальный титул, доступен только одному игроку.",
+            title_text="Владыка",
+        ),
+        ShopItem(
+            id="title_sovereign",
+            name="Титул: Суверен",
+            price=2900,
+            kind="title",
+            description="Эпический уникальный титул, доступен только одному игроку.",
+            title_text="Суверен",
+        ),
+        ShopItem(
+            id="title_immortal",
+            name="Титул: Бессмертный",
+            price=3300,
+            kind="title",
+            description="Эпический уникальный титул, доступен только одному игроку.",
+            title_text="Бессмертный",
         ),
     )
     # Title bonuses (basis points, 100 = 1%)
     title_bonus_bp: dict[str, int] = field(
         default_factory=lambda: {
-            "title_wanderer": 100,
-            "title_pioneer": 150,
-            "title_hawk": 200,
-            "title_shadow": 250,
-            "title_marauder": 300,
-            "title_archon": 350,
-            "title_legend": 400,
+            "title_wanderer": 500,
+            "title_pioneer": 750,
+            "title_hawk": 1000,
+            "title_shadow": 1250,
+            "title_marauder": 1500,
+            "title_archon": 1750,
+            "title_legend": 2000,
+            "title_oracle": 2250,
+            "title_phantom": 2500,
+            "title_overlord": 2750,
+            "title_sovereign": 3000,
+            "title_immortal": 3250,
         }
     )
 
