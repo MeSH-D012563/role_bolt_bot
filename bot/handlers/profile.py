@@ -7,6 +7,7 @@ from aiogram.types import Message
 from bot.config import Settings
 from bot.database import Database
 from bot.services.formatting import format_percent_bp
+from bot.services.messages import answer_in_chunks, split_message_text
 from bot.services.shop import get_item, get_title_bonus_bp, get_title_text
 from bot.services.timefmt import format_duration, seconds_until
 
@@ -74,9 +75,10 @@ async def cmd_profile(message: Message, db: Database, settings: Settings) -> Non
     if message.chat.type != "private":
         await message.answer("Профиль доступен только в ЛС. Отправил тебе в личку.")
         try:
-            await message.bot.send_message(message.from_user.id, text)
+            for chunk in split_message_text(text):
+                await message.bot.send_message(message.from_user.id, chunk)
         except Exception:
             await message.answer("Не удалось отправить ЛС. Открой личку с ботом.")
         return
 
-    await message.answer(text)
+    await answer_in_chunks(message, text)

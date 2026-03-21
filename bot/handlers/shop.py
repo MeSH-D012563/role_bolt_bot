@@ -11,6 +11,7 @@ from bot.config import Settings
 from bot.database import Database, utc_now
 from bot.keyboards import shop_keyboard
 from bot.services.formatting import format_percent_bp, format_user
+from bot.services.messages import answer_in_chunks
 from bot.services.shop import (
     category_items,
     get_item,
@@ -68,7 +69,7 @@ async def cmd_shop(message: Message, db: Database, settings: Settings) -> None:
         return
     items = category_items(settings, "all")
     text = await build_shop_text(db, settings, message.from_user.id, "all")
-    await message.answer(text, reply_markup=shop_keyboard(items, "all"))
+    await answer_in_chunks(message, text, reply_markup=shop_keyboard(items, "all"))
 
 
 @router.message(Command("help_shop", "shop_help"))
@@ -133,7 +134,7 @@ async def cmd_help_shop(message: Message, settings: Settings) -> None:
         if item.description:
             lines.append(f"Описание: {item.description}")
 
-    await message.answer("\n".join(lines))
+    await answer_in_chunks(message, "\n".join(lines))
 
 
 @router.message(Command("buy"))
@@ -250,6 +251,7 @@ async def build_shop_text(db: Database, settings: Settings, viewer_id: int, cate
         if not items_list:
             return
         sections.append(f"{title}:")
+        compact = category == "all"
         for it in items_list:
             status = ""
             if it.kind == "title":
@@ -272,9 +274,9 @@ async def build_shop_text(db: Database, settings: Settings, viewer_id: int, cate
                 f"• {it.id} — {it.name} — {it.price} {settings.currency}{status}{duration}{bonus}"
             )
             sections.append(line)
-            if it.description:
+            if not compact and it.description:
                 sections.append(f"Описание: {it.description}")
-            if it.kind == "title" and bonus_bp > 0:
+            if not compact and it.kind == "title" and bonus_bp > 0:
                 sections.append(
                     f"Эффект: +{format_percent_bp(bonus_bp)} к выигрышам в слотах и баскете."
                 )
