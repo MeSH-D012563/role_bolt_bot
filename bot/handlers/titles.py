@@ -42,6 +42,43 @@ def sale_keyboard(title_id: str, price: int, currency: str) -> InlineKeyboardMar
     )
 
 
+def instant_sell_keyboard(
+    seller_id: int,
+    title_id: str,
+    price: int,
+    currency: str,
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"Продать за {price} {currency}",
+                    callback_data=f"title:sellnow:confirm:{seller_id}:{title_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Отмена",
+                    callback_data=f"title:sellnow:cancel:{seller_id}:{title_id}",
+                )
+            ],
+        ]
+    )
+
+
+def private_sell_keyboard(url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Открыть ЛС для продажи",
+                    url=url,
+                )
+            ]
+        ]
+    )
+
+
 async def _delete_sale_message(bot, sale) -> None:
     try:
         await bot.delete_message(sale.chat_id, sale.message_id)
@@ -49,11 +86,104 @@ async def _delete_sale_message(bot, sale) -> None:
         pass
 
 
+def get_instant_sell_price(market_price: int) -> int:
+    return max((market_price * 90) // 100, 1)
+
+
 async def get_title_tax_debt_amount(db: Database, user_id: int) -> int:
     state = await db.get_title_tax_state(user_id)
     if state is None or state.debt_amount <= 0:
         return 0
     return state.debt_amount
+
+
+async def perform_instant_title_sale(
+    message: Message,
+    *,
+    seller_id: int,
+    db: Database,
+    settings: Settings,
+) -> tuple[bool, str]:
+    user = await db.get_user(seller_id)
+    if user is None or not user.active_title_id:
+        return False, "У тебя нет выбранного титула. Сначала выбери его через /set_title."
+
+    title_id = user.active_title_id
+    owner = await db.get_title_owner(title_id)
+    if owner != seller_id:
+        return False, "Этот титул тебе не принадлежит."
+
+    item = get_item(settings, title_id)
+    if item is None or item.kind != "title":
+        return False, "Не удалось определить рыночную стоимость титула."
+
+    sale = await db.get_title_sale(title_id)
+    if sale:
+        await _delete_sale_message(message.bot, sale)
+
+    instant_price = get_instant_sell_price(item.price)
+    now = utc_now()
+    async with db.transaction() as conn:
+        if sale:
+            await conn.execute("DELETE FROM title_sales WHERE title_id = ?", (title_id,))
+        await conn.execute(
+            "DELETE FROM title_ownership WHERE title_id = ? AND owner_id = ?",
+            (title_id, seller_id),
+        )
+        await conn.execute(
+            """
+            UPDATE users
+            SET balance = balance + ?, active_title_id = NULL, updated_at = ?
+            WHERE user_id = ? AND active_title_id = ?
+            """,
+            (instant_price, now, seller_id, title_id),
+        )
+
+    title_text = get_title_text(settings, title_id) or (item.title_text or item.name)
+    return (
+        True,
+        f"💸 Титул {title_text} мгновенно продан боту.\n"
+        f"Рыночная цена: {item.price} {settings.currency}\n"
+        f"Выплата: {instant_price} {settings.currency} (90%).",
+    )
+
+
+async def send_instant_sell_confirmation(
+    message: Message,
+    *,
+    seller_id: int,
+    db: Database,
+    settings: Settings,
+) -> None:
+    user = await db.get_user(seller_id)
+    if user is None or not user.active_title_id:
+        await message.answer("У тебя нет выбранного титула. Сначала выбери его через /set_title.")
+        return
+
+    title_id = user.active_title_id
+    owner = await db.get_title_owner(title_id)
+    if owner != seller_id:
+        await message.answer("Этот титул тебе не принадлежит.")
+        return
+
+    item = get_item(settings, title_id)
+    if item is None or item.kind != "title":
+        await message.answer("Не удалось определить рыночную стоимость титула.")
+        return
+
+    instant_price = get_instant_sell_price(item.price)
+    title_text = get_title_text(settings, title_id) or (item.title_text or item.name)
+    await message.answer(
+        f"Подтвердить мгновенную продажу титула {title_text}?\n"
+        f"Рыночная цена: {item.price} {settings.currency}\n"
+        f"Ты получишь: {instant_price} {settings.currency} (90%).",
+        reply_markup=instant_sell_keyboard(
+            seller_id,
+            title_id,
+            instant_price,
+            settings.currency,
+        ),
+    )
 
 
 @router.message(Command("sell_title"))
@@ -99,6 +229,29 @@ async def cmd_sell_title(message: Message, command: CommandObject, db: Database,
 
     sent = await message.answer(text, reply_markup=sale_keyboard(title_id, price, settings.currency))
     await db.upsert_title_sale(title_id, sent.chat.id, sent.message_id, message.from_user.id, price)
+
+
+@router.message(Command("sell_title_now"))
+async def cmd_sell_title_now(message: Message, db: Database, settings: Settings) -> None:
+    if message.chat.type != "private":
+        bot_user = await message.bot.get_me()
+        if not bot_user.username:
+            await message.answer("Команда доступна в ЛС. Открой личку с ботом и отправь /sell_title_now.")
+            return
+        await message.answer(
+            "Подтверждение мгновенной продажи доступно только в ЛС.",
+            reply_markup=private_sell_keyboard(
+                f"https://t.me/{bot_user.username}?start=sell_title_now",
+            ),
+        )
+        return
+
+    await send_instant_sell_confirmation(
+        message,
+        seller_id=message.from_user.id,
+        db=db,
+        settings=settings,
+    )
 
 
 @router.message(Command("gift_title"))
@@ -276,3 +429,65 @@ async def title_buy_callback(callback, db: Database, settings: Settings) -> None
         await callback.message.delete()
     except Exception:
         pass
+
+
+@router.callback_query(F.data.startswith("title:sellnow:"))
+async def title_sell_now_callback(callback, db: Database, settings: Settings) -> None:
+    parts = callback.data.split(":")
+    if len(parts) != 5:
+        await callback.answer("Некорректные данные", show_alert=True)
+        return
+
+    action = parts[2]
+    try:
+        seller_id = int(parts[3])
+    except ValueError:
+        await callback.answer("Некорректные данные", show_alert=True)
+        return
+    title_id = parts[4]
+
+    if callback.from_user.id != seller_id:
+        await callback.answer("Подтвердить может только владелец титула", show_alert=True)
+        return
+
+    if action == "cancel":
+        await callback.answer("Продажа отменена")
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+
+    if action != "confirm":
+        await callback.answer("Некорректное действие", show_alert=True)
+        return
+
+    user = await db.get_user(seller_id)
+    if user is None or user.active_title_id != title_id:
+        await callback.answer("Этот титул уже не активен", show_alert=True)
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+
+    success, response_text = await perform_instant_title_sale(
+        callback.message,
+        seller_id=seller_id,
+        db=db,
+        settings=settings,
+    )
+    if not success:
+        await callback.answer(response_text, show_alert=True)
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+
+    await callback.answer("Продажа выполнена")
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await callback.message.answer(response_text)

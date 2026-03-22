@@ -30,6 +30,7 @@ async def on_startup(bot: Bot) -> None:
         BotCommand(command="pay", description="Перевести: /pay <сумма> (ответом)"),
         BotCommand(command="get_cash", description="Получить ежедневный бонус"),
         BotCommand(command="sell_title", description="Продать титул: /sell_title <цена>"),
+        BotCommand(command="sell_title_now", description="Продать титул боту за 90% (ЛС)"),
         BotCommand(command="gift_title", description="Подарить титул (ответом)"),
         BotCommand(command="set_title", description="Выбрать титул"),
         BotCommand(command="slot", description="🎰 Слот-автомат: /slot <ставка>"),

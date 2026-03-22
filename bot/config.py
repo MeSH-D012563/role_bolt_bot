@@ -60,8 +60,8 @@ class Settings:
         default_factory=lambda: {
             "seven": (155, "Пара 7 x1.55"),
             "bar": (135, "Пара BAR x1.35"),
-            "cherry": (115, "Пара 🍒 x1.15"),
-            "lemon": (100, "Пара 🍋 x1.0"),
+            "cherry": (125, "Пара 🍒 x1.25"),
+            "lemon": (120, "Пара 🍋 x1.2"),
         }
     )
 
@@ -234,7 +234,7 @@ class Settings:
             name="Титул: Странник",
             price=450,
             kind="title",
-            description="Экономический титул для стабильного прироста через ежедневный бонус.",
+            description="Стартовый экономический титул с базовым бонусом к ежедневному доходу.",
             title_text="Странник",
         ),
         ShopItem(
@@ -242,7 +242,7 @@ class Settings:
             name="Титул: Пионер",
             price=650,
             kind="title",
-            description="Специализация на слотах с небольшим бонусом к выигрышам.",
+            description="Базовый слот‑титул с первым заметным бонусом к выплатам.",
             title_text="Пионер",
         ),
         ShopItem(
@@ -250,7 +250,7 @@ class Settings:
             name="Титул: Ястреб",
             price=650,
             kind="title",
-            description="Специализация на баскетболе с бонусом к банку при попадании.",
+            description="Базовый баскет‑титул с первым заметным бонусом к банку.",
             title_text="Ястреб",
         ),
         ShopItem(
@@ -258,7 +258,7 @@ class Settings:
             name="Титул: Тень",
             price=900,
             kind="title",
-            description="Страхует неудачные ходы частичным возвратом ставки.",
+            description="Страхующий титул с уверенным возвратом ставки при неудаче.",
             title_text="Тень",
         ),
         ShopItem(
@@ -266,7 +266,7 @@ class Settings:
             name="Титул: Мародер",
             price=950,
             kind="title",
-            description="Снижает цену защит и усиливает контроль над темпом игры.",
+            description="Базовый защитный титул с ощутимой скидкой на защиты.",
             title_text="Мародер",
         ),
         ShopItem(
@@ -274,7 +274,7 @@ class Settings:
             name="Титул: Архонт",
             price=1250,
             kind="title",
-            description="Гибридный титул для экономики и магазина защит.",
+            description="Усиленный экономико‑защитный титул с баффом выше стартовых вариантов.",
             title_text="Архонт",
         ),
         ShopItem(
@@ -282,7 +282,7 @@ class Settings:
             name="Титул: Легенда",
             price=1550,
             kind="title",
-            description="Продвинутый слот‑титул с прибавкой к ежедневному доходу.",
+            description="Старший слот‑титул: сильнее базовых и даёт дополнительный доход.",
             title_text="Легенда",
         ),
         ShopItem(
@@ -290,7 +290,7 @@ class Settings:
             name="Титул: Оракул",
             price=1550,
             kind="title",
-            description="Продвинутый титул для баскетбола и спокойного фарма.",
+            description="Старший баскет‑титул: сильнее базовых и даёт дополнительный доход.",
             title_text="Оракул",
         ),
         ShopItem(
@@ -298,7 +298,7 @@ class Settings:
             name="Титул: Фантом",
             price=1900,
             kind="title",
-            description="Агрессивный гибрид слота и страховки от неудач.",
+            description="Элитный слот‑титул с усиленной подстраховкой от неудач.",
             title_text="Фантом",
         ),
         ShopItem(
@@ -306,7 +306,7 @@ class Settings:
             name="Титул: Владыка",
             price=2200,
             kind="title",
-            description="Усиливает баскетбол и даёт максимальную скидку на защиты.",
+            description="Элитный баскет‑титул с мощным бонусом и лучшей скидкой на защиты.",
             title_text="Владыка",
         ),
         ShopItem(
@@ -314,7 +314,7 @@ class Settings:
             name="Титул: Суверен",
             price=2600,
             kind="title",
-            description="Универсальный титул для обеих PvE‑игр.",
+            description="Топовый универсальный титул с сильными бонусами сразу в двух играх.",
             title_text="Суверен",
         ),
         ShopItem(
@@ -322,28 +322,34 @@ class Settings:
             name="Титул: Бессмертный",
             price=3200,
             kind="title",
-            description="Самый гибкий титул: понемногу усиливает все мирные способы заработка.",
+            description="Самый сильный титул с лучшим суммарным набором баффов.",
             title_text="Бессмертный",
         ),
     )
     title_effects: dict[str, TitleEffect] = field(
         default_factory=lambda: {
-            "title_wanderer": TitleEffect(daily_bonus_amount=10),
-            "title_pioneer": TitleEffect(slot_bonus_bp=125),
-            "title_hawk": TitleEffect(basket_bonus_bp=125),
-            "title_shadow": TitleEffect(loss_refund_bp=200),
-            "title_marauder": TitleEffect(protection_discount_bp=1000),
-            "title_archon": TitleEffect(daily_bonus_amount=15, protection_discount_bp=500),
-            "title_legend": TitleEffect(slot_bonus_bp=200, daily_bonus_amount=10),
-            "title_oracle": TitleEffect(basket_bonus_bp=200, daily_bonus_amount=10),
-            "title_phantom": TitleEffect(slot_bonus_bp=100, loss_refund_bp=300),
-            "title_overlord": TitleEffect(basket_bonus_bp=100, protection_discount_bp=1500),
-            "title_sovereign": TitleEffect(slot_bonus_bp=150, basket_bonus_bp=150),
+            "title_wanderer": TitleEffect(daily_bonus_amount=15),
+            "title_pioneer": TitleEffect(slot_bonus_bp=200),
+            "title_hawk": TitleEffect(basket_bonus_bp=200),
+            "title_shadow": TitleEffect(loss_refund_bp=300),
+            "title_marauder": TitleEffect(protection_discount_bp=1500),
+            "title_archon": TitleEffect(daily_bonus_amount=20, protection_discount_bp=1750),
+            "title_legend": TitleEffect(slot_bonus_bp=325, daily_bonus_amount=15),
+            "title_oracle": TitleEffect(basket_bonus_bp=325, daily_bonus_amount=15),
+            "title_phantom": TitleEffect(slot_bonus_bp=350, loss_refund_bp=350),
+            "title_overlord": TitleEffect(basket_bonus_bp=375, protection_discount_bp=2250),
+            "title_sovereign": TitleEffect(
+                slot_bonus_bp=450,
+                basket_bonus_bp=450,
+                daily_bonus_amount=10,
+                protection_discount_bp=1250,
+            ),
             "title_immortal": TitleEffect(
-                slot_bonus_bp=200,
-                basket_bonus_bp=200,
-                loss_refund_bp=100,
-                daily_bonus_amount=15,
+                slot_bonus_bp=500,
+                basket_bonus_bp=500,
+                loss_refund_bp=150,
+                daily_bonus_amount=18,
+                protection_discount_bp=2000,
             ),
         }
     )
