@@ -8,6 +8,7 @@ from aiogram.types import Message
 
 from bot.config import Settings
 from bot.database import Database
+from bot.services.shop import get_title_effect
 from bot.services.timefmt import format_duration
 
 router = Router()
@@ -19,6 +20,15 @@ async def cmd_get_cash(message: Message, db: Database, settings: Settings) -> No
     cutoff = now - timedelta(seconds=settings.daily_cash_cooldown_seconds)
     now_iso = now.isoformat()
     cutoff_iso = cutoff.isoformat()
+    user = await db.get_user(message.from_user.id)
+    tax_state = await db.get_title_tax_state(message.from_user.id)
+    effects_enabled = tax_state is None or tax_state.debt_amount <= 0
+    title_effect = get_title_effect(
+        settings,
+        user.active_title_id if user else None,
+        effects_enabled=effects_enabled,
+    )
+    reward = settings.daily_cash_amount + title_effect.daily_bonus_amount
 
     claimed = False
     async with db.transaction() as conn:
@@ -30,7 +40,7 @@ async def cmd_get_cash(message: Message, db: Database, settings: Settings) -> No
               AND (last_cash_claimed_at IS NULL OR last_cash_claimed_at <= ?)
             """,
             (
-                settings.daily_cash_amount,
+                reward,
                 now_iso,
                 now_iso,
                 message.from_user.id,
@@ -41,10 +51,13 @@ async def cmd_get_cash(message: Message, db: Database, settings: Settings) -> No
             claimed = True
 
     if claimed:
-        await message.answer(
-            f"✅ Ты получил {settings.daily_cash_amount} {settings.currency}.\n"
-            "Следующий бонус будет доступен через 24 часа."
-        )
+        lines = [f"✅ Ты получил {reward} {settings.currency}."]
+        if title_effect.daily_bonus_amount > 0:
+            lines.append(
+                f"Бонус титула: +{title_effect.daily_bonus_amount} {settings.currency}."
+            )
+        lines.append("Следующий бонус будет доступен через 12 часов.")
+        await message.answer("\n".join(lines))
         return
 
     user = await db.get_user(message.from_user.id)

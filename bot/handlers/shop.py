@@ -13,9 +13,13 @@ from bot.keyboards import shop_keyboard
 from bot.services.formatting import format_percent_bp, format_user
 from bot.services.messages import answer_in_chunks
 from bot.services.shop import (
+    calculate_title_tax,
     category_items,
+    describe_title_effects,
+    format_title_effects,
     get_item,
-    get_title_bonus_bp,
+    get_discounted_price,
+    get_title_effect,
     get_title_text,
     iter_items,
     list_punishment_items,
@@ -60,6 +64,13 @@ async def get_user_title(db: Database, settings: Settings, user_id: int) -> str 
     if user is None:
         return None
     return get_title_text(settings, user.active_title_id)
+
+
+async def get_title_tax_debt_amount(db: Database, user_id: int) -> int:
+    state = await db.get_title_tax_state(user_id)
+    if state is None or state.debt_amount <= 0:
+        return 0
+    return state.debt_amount
 
 
 @router.message(Command("shop"))
@@ -114,7 +125,12 @@ async def cmd_help_shop(message: Message, settings: Settings) -> None:
         "• Купленный титул нельзя купить повторно другим игроком",
         "• Титулы можно выбирать в профиле через /set_title",
         "• Активный титул отображается, когда бот упоминает игрока",
-        "• Титулы дают бонус к выигрышам в слотах и баскете",
+        "• У титулов разные эффекты: бонусы к играм, защите и /get_cash",
+        "• Скидка титула на защиты отображается прямо в /shop",
+        f"• При 2+ титулах взимается налог {format_percent_bp(settings.title_tax_rate_bp)} в сутки от общей стоимости титулов",
+        "• Если налог не списался, даётся 24 часа на погашение долга",
+        "• Пока долг активен, эффекты титулов отключены",
+        "• После просрочки бот забирает один неактивный титул",
         "",
         "Товары:",
     ]
@@ -123,14 +139,15 @@ async def cmd_help_shop(message: Message, settings: Settings) -> None:
         duration = ""
         if item.duration_seconds:
             duration = f" ({format_duration(item.duration_seconds)})"
-        bonus = ""
         if item.kind == "title":
-            bonus_bp = get_title_bonus_bp(settings, item.id)
-            if bonus_bp > 0:
-                bonus = f" (бонус +{format_percent_bp(bonus_bp)})"
-        lines.append(
-            f"• {item.id} — {item.name} — {item.price} {settings.currency}{duration}{bonus}"
-        )
+            lines.append(
+                f"• {item.id} — {item.name} — {item.price} {settings.currency}{duration}"
+            )
+            lines.append(f"Эффекты: {format_title_effects(settings, item.id)}")
+        else:
+            lines.append(
+                f"• {item.id} — {item.name} — {item.price} {settings.currency}{duration}"
+            )
         if item.description:
             lines.append(f"Описание: {item.description}")
 
@@ -176,7 +193,10 @@ async def cmd_set_title(message: Message, command: CommandObject, db: Database, 
 
     await db.set_active_title(message.from_user.id, arg)
     title_text = item.title_text or item.name
-    await message.answer(f"Активный титул установлен: {title_text}")
+    await message.answer(
+        f"Активный титул установлен: {title_text}\n"
+        f"Эффекты: {format_title_effects(settings, arg)}"
+    )
 
 
 @router.callback_query(F.data.startswith("shop:cat:"))
@@ -246,6 +266,25 @@ async def build_shop_text(db: Database, settings: Settings, viewer_id: int, cate
         f"Категория: {category_labels.get(category, 'Все')}",
         "",
     ]
+    viewer = await db.get_user(viewer_id)
+    viewer_tax_debt = await get_title_tax_debt_amount(db, viewer_id)
+    viewer_effect = get_title_effect(
+        settings,
+        viewer.active_title_id if viewer else None,
+        effects_enabled=viewer_tax_debt <= 0,
+    )
+    viewer_titles = await db.get_user_titles(viewer_id)
+    current_tax = calculate_title_tax(settings, viewer_titles)
+    if viewer_tax_debt > 0:
+        sections.append(
+            f"⚠️ Долг по титульному налогу: {viewer_tax_debt} {settings.currency}. Эффекты титулов отключены."
+        )
+        sections.append("")
+    elif current_tax > 0:
+        sections.append(
+            f"Налог на титулы: {current_tax} {settings.currency} / 24ч (первый титул бесплатный)."
+        )
+        sections.append("")
 
     async def add_section(title: str, items_list):
         if not items_list:
@@ -264,22 +303,20 @@ async def build_shop_text(db: Database, settings: Settings, viewer_id: int, cate
             duration = ""
             if it.duration_seconds:
                 duration = f" ({format_duration(it.duration_seconds)})"
-            bonus = ""
-            bonus_bp = 0
-            if it.kind == "title":
-                bonus_bp = get_title_bonus_bp(settings, it.id)
-                if bonus_bp > 0:
-                    bonus = f" (бонус +{format_percent_bp(bonus_bp)})"
+            price = it.price
+            if it.kind == "protection":
+                price = get_discounted_price(price, viewer_effect.protection_discount_bp)
             line = (
-                f"• {it.id} — {it.name} — {it.price} {settings.currency}{status}{duration}{bonus}"
+                f"• {it.id} — {it.name} — {price} {settings.currency}{status}{duration}"
             )
+            if it.kind == "protection" and price < it.price:
+                line += f" (вместо {it.price})"
             sections.append(line)
             if not compact and it.description:
                 sections.append(f"Описание: {it.description}")
-            if not compact and it.kind == "title" and bonus_bp > 0:
-                sections.append(
-                    f"Эффект: +{format_percent_bp(bonus_bp)} к выигрышам в слотах и баскете."
-                )
+            if not compact and it.kind == "title":
+                for effect_line in describe_title_effects(settings, it.id):
+                    sections.append(f"Эффект: {effect_line}.")
         sections.append("")
 
     if category == "punish":
@@ -439,6 +476,14 @@ async def process_buy(
         return
 
     if item.kind == "protection":
+        buyer = await db.get_user(message.from_user.id)
+        buyer_tax_debt = await get_title_tax_debt_amount(db, message.from_user.id)
+        title_effect = get_title_effect(
+            settings,
+            buyer.active_title_id if buyer else None,
+            effects_enabled=buyer_tax_debt <= 0,
+        )
+        price = get_discounted_price(item.price, title_effect.protection_discount_bp)
         duration = item.duration_seconds or 0
         now_dt = datetime.now(timezone.utc)
         new_exp = None
@@ -446,7 +491,7 @@ async def process_buy(
         async with db.transaction() as conn:
             cur = await conn.execute(
                 "UPDATE users SET balance = balance - ?, updated_at = ? WHERE user_id = ? AND balance >= ?",
-                (item.price, now_dt.isoformat(), message.from_user.id, item.price),
+                (price, now_dt.isoformat(), message.from_user.id, price),
             )
             if cur.rowcount != 1:
                 status = "no_funds"
@@ -481,12 +526,25 @@ async def process_buy(
         if new_exp is None:
             await message.answer("Не удалось активировать защиту")
             return
-        await message.answer(
-            f"🛡 Защита активирована на {format_duration(duration)}. Осталось {format_duration(seconds_until(new_exp.isoformat()))}"
-        )
+        lines = [
+            f"🛡 Защита активирована на {format_duration(duration)}.",
+            f"Осталось {format_duration(seconds_until(new_exp.isoformat()))}.",
+            f"Стоимость: {price} {settings.currency}.",
+        ]
+        if title_effect.protection_discount_bp > 0 and price < item.price:
+            lines.append(
+                f"Скидка титула: -{format_percent_bp(title_effect.protection_discount_bp)}."
+            )
+        await message.answer("\n".join(lines))
         return
 
     if item.kind == "title":
+        debt_amount = await get_title_tax_debt_amount(db, message.from_user.id)
+        if debt_amount > 0:
+            await message.answer(
+                f"Сначала погаси долг по титульному налогу: {debt_amount} {settings.currency}."
+            )
+            return
         result = "ok"
         async with db.transaction() as conn:
             cur = await conn.execute(
@@ -528,8 +586,11 @@ async def process_buy(
             return
 
         title_text = item.title_text or item.name
+        effect_text = format_title_effects(settings, item.id)
         await message.answer(
-            f"🏷 Титул «{title_text}» куплен и выбран активным. Сменить: /set_title"
+            f"🏷 Титул «{title_text}» куплен и выбран активным.\n"
+            f"Эффекты: {effect_text}\n"
+            "Сменить: /set_title"
         )
         return
 

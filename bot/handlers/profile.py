@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
 from bot.config import Settings
-from bot.database import Database
+from bot.database import Database, parse_datetime
 from bot.services.formatting import format_percent_bp
 from bot.services.messages import answer_in_chunks, split_message_text
-from bot.services.shop import get_item, get_title_bonus_bp, get_title_text
+from bot.services.shop import calculate_title_tax, format_title_effects, get_item, get_title_text
 from bot.services.timefmt import format_duration, seconds_until
 
 router = Router()
@@ -22,7 +24,6 @@ async def cmd_profile(message: Message, db: Database, settings: Settings) -> Non
         return
 
     active_title_text = get_title_text(settings, user.active_title_id) or "нет"
-    active_bonus_bp = get_title_bonus_bp(settings, user.active_title_id)
     owned_titles = await db.get_user_titles(user.user_id)
     title_lines = []
     if owned_titles:
@@ -30,11 +31,8 @@ async def cmd_profile(message: Message, db: Database, settings: Settings) -> Non
             item = get_item(settings, tid)
             title_name = item.title_text if item and item.title_text else (item.name if item else tid)
             marker = " (активный)" if tid == user.active_title_id else ""
-            bonus_bp = get_title_bonus_bp(settings, tid)
-            bonus_text = (
-                f" (+{format_percent_bp(bonus_bp)} к выигрышам)" if bonus_bp > 0 else ""
-            )
-            title_lines.append(f"• {tid} — {title_name}{bonus_text}{marker}")
+            effect_text = format_title_effects(settings, tid)
+            title_lines.append(f"• {tid} — {title_name} — {effect_text}{marker}")
     else:
         title_lines.append("— нет")
 
@@ -51,6 +49,33 @@ async def cmd_profile(message: Message, db: Database, settings: Settings) -> Non
     if not protection_lines:
         protection_lines.append("— нет")
 
+    title_tax_state = await db.get_title_tax_state(user.user_id)
+    current_tax = calculate_title_tax(settings, owned_titles)
+    title_tax_lines = [
+        f"Ставка: {format_percent_bp(settings.title_tax_rate_bp)} от суммарной стоимости титулов при 2+ титулах.",
+        "Первый титул бесплатный.",
+    ]
+    if current_tax > 0:
+        title_tax_lines.append(f"Текущий налог: {current_tax} {settings.currency} / 24ч.")
+    else:
+        title_tax_lines.append("Текущий налог: нет.")
+    if title_tax_state and title_tax_state.debt_amount > 0:
+        title_tax_lines.append(f"Долг: {title_tax_state.debt_amount} {settings.currency}.")
+        if title_tax_state.debt_started_at:
+            debt_started_dt = parse_datetime(title_tax_state.debt_started_at)
+            if debt_started_dt is not None:
+                remaining = max(
+                    int(
+                        settings.title_tax_grace_seconds
+                        - (datetime.now(timezone.utc) - debt_started_dt).total_seconds()
+                    ),
+                    0,
+                )
+            else:
+                remaining = 0
+            title_tax_lines.append(f"До конфискации неактивного титула: {format_duration(remaining)}.")
+        title_tax_lines.append("Эффекты титулов отключены до погашения долга.")
+
     text = (
         "👤 Профиль\n"
         f"Баланс: {user.balance} {settings.currency}\n"
@@ -59,8 +84,8 @@ async def cmd_profile(message: Message, db: Database, settings: Settings) -> Non
         "🏷 Титулы\n"
         f"Активный: {active_title_text}"
     )
-    if active_bonus_bp > 0 and active_title_text != "нет":
-        text += f" (+{format_percent_bp(active_bonus_bp)} к выигрышам)"
+    if user.active_title_id:
+        text += f"\nЭффекты: {format_title_effects(settings, user.active_title_id)}"
     text += (
         "\n"
         "Список:\n"
@@ -68,6 +93,9 @@ async def cmd_profile(message: Message, db: Database, settings: Settings) -> Non
         + "\n"
         "\n🛡 Защиты\n"
         + "\n".join(protection_lines)
+        + "\n"
+        "\n💸 Налог на титулы\n"
+        + "\n".join(title_tax_lines)
         + "\n"
         "\nКоманда: /set_title <title_id|none>"
     )

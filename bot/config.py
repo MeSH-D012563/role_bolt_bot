@@ -20,6 +20,15 @@ class ShopItem:
 
 
 @dataclass(frozen=True)
+class TitleEffect:
+    slot_bonus_bp: int = 0
+    basket_bonus_bp: int = 0
+    loss_refund_bp: int = 0
+    daily_bonus_amount: int = 0
+    protection_discount_bp: int = 0
+
+
+@dataclass(frozen=True)
 class Settings:
     bot_token: str
     db_path: str = "data/bot.db"
@@ -40,25 +49,25 @@ class Settings:
     # multiplier in basis points (100 = x1.0)
     slot_symbol_payouts: dict[str, tuple[int, str]] = field(
         default_factory=lambda: {
-            "seven": (700, "Джекпот x7"),
-            "bar": (400, "BAR x4"),
+            "seven": (620, "Джекпот x6.2"),
+            "bar": (380, "BAR x3.8"),
             "cherry": (260, "Вишни x2.6"),
-            "lemon": (140, "Лимоны x1.4"),
+            "lemon": (160, "Лимоны x1.6"),
         }
     )
     # Slot payouts for 2 in a row
     slot_pair_payouts: dict[str, tuple[int, str]] = field(
         default_factory=lambda: {
-            "seven": (190, "Пара 7 x1.9"),
-            "bar": (150, "Пара BAR x1.5"),
-            "cherry": (130, "Пара 🍒 x1.3"),
-            "lemon": (120, "Пара 🍋 x1.2"),
+            "seven": (155, "Пара 7 x1.55"),
+            "bar": (135, "Пара BAR x1.35"),
+            "cherry": (115, "Пара 🍒 x1.15"),
+            "lemon": (100, "Пара 🍋 x1.0"),
         }
     )
 
     # Basketball: dice.value for 🏀 is 1..5
     basket_success_values: tuple[int, ...] = (4, 5)
-    basket_multiplier_bp: int = 260  # x2.6
+    basket_multiplier_bp: int = 235  # x2.35
 
     # Duel settings
     duel_ttl_seconds: int = 120
@@ -67,6 +76,12 @@ class Settings:
     # Daily reward
     daily_cash_amount: int = 75
     daily_cash_cooldown_seconds: int = 12 * 60 * 60
+
+    # Title tax
+    title_tax_rate_bp: int = 250  # 2.5% from total title value if player owns 2+ titles
+    title_tax_period_seconds: int = 24 * 60 * 60
+    title_tax_grace_seconds: int = 24 * 60 * 60
+    title_tax_check_interval_seconds: int = 60 * 60
 
     # Telegram API limits: bans shorter than ~30s can be treated as permanent
     telegram_min_restrict_seconds: int = 30
@@ -217,115 +232,119 @@ class Settings:
         ShopItem(
             id="title_wanderer",
             name="Титул: Странник",
-            price=500,
+            price=450,
             kind="title",
-            description="Уникальный титул, доступен только одному игроку.",
+            description="Экономический титул для стабильного прироста через ежедневный бонус.",
             title_text="Странник",
         ),
         ShopItem(
             id="title_pioneer",
             name="Титул: Пионер",
-            price=700,
+            price=650,
             kind="title",
-            description="Уникальный титул, доступен только одному игроку.",
+            description="Специализация на слотах с небольшим бонусом к выигрышам.",
             title_text="Пионер",
         ),
         ShopItem(
             id="title_hawk",
             name="Титул: Ястреб",
-            price=850,
+            price=650,
             kind="title",
-            description="Уникальный титул, доступен только одному игроку.",
+            description="Специализация на баскетболе с бонусом к банку при попадании.",
             title_text="Ястреб",
         ),
         ShopItem(
             id="title_shadow",
             name="Титул: Тень",
-            price=1000,
+            price=900,
             kind="title",
-            description="Уникальный титул, доступен только одному игроку.",
+            description="Страхует неудачные ходы частичным возвратом ставки.",
             title_text="Тень",
         ),
         ShopItem(
             id="title_marauder",
             name="Титул: Мародер",
-            price=1200,
+            price=950,
             kind="title",
-            description="Уникальный титул, доступен только одному игроку.",
+            description="Снижает цену защит и усиливает контроль над темпом игры.",
             title_text="Мародер",
         ),
         ShopItem(
             id="title_archon",
             name="Титул: Архонт",
-            price=1550,
+            price=1250,
             kind="title",
-            description="Уникальный титул, доступен только одному игроку.",
+            description="Гибридный титул для экономики и магазина защит.",
             title_text="Архонт",
         ),
         ShopItem(
             id="title_legend",
             name="Титул: Легенда",
-            price=1700,
+            price=1550,
             kind="title",
-            description="Редкий уникальный титул, доступен только одному игроку.",
+            description="Продвинутый слот‑титул с прибавкой к ежедневному доходу.",
             title_text="Легенда",
         ),
         ShopItem(
             id="title_oracle",
             name="Титул: Оракул",
-            price=1950,
+            price=1550,
             kind="title",
-            description="Редкий уникальный титул, доступен только одному игроку.",
+            description="Продвинутый титул для баскетбола и спокойного фарма.",
             title_text="Оракул",
         ),
         ShopItem(
             id="title_phantom",
             name="Титул: Фантом",
-            price=2250,
+            price=1900,
             kind="title",
-            description="Редкий уникальный титул, доступен только одному игроку.",
+            description="Агрессивный гибрид слота и страховки от неудач.",
             title_text="Фантом",
         ),
         ShopItem(
             id="title_overlord",
             name="Титул: Владыка",
-            price=2550,
+            price=2200,
             kind="title",
-            description="Редкий уникальный титул, доступен только одному игроку.",
+            description="Усиливает баскетбол и даёт максимальную скидку на защиты.",
             title_text="Владыка",
         ),
         ShopItem(
             id="title_sovereign",
             name="Титул: Суверен",
-            price=2900,
+            price=2600,
             kind="title",
-            description="Эпический уникальный титул, доступен только одному игроку.",
+            description="Универсальный титул для обеих PvE‑игр.",
             title_text="Суверен",
         ),
         ShopItem(
             id="title_immortal",
             name="Титул: Бессмертный",
-            price=3300,
+            price=3200,
             kind="title",
-            description="Эпический уникальный титул, доступен только одному игроку.",
+            description="Самый гибкий титул: понемногу усиливает все мирные способы заработка.",
             title_text="Бессмертный",
         ),
     )
-    # Title bonuses (basis points, 100 = 1%)
-    title_bonus_bp: dict[str, int] = field(
+    title_effects: dict[str, TitleEffect] = field(
         default_factory=lambda: {
-            "title_wanderer": 500,
-            "title_pioneer": 750,
-            "title_hawk": 1000,
-            "title_shadow": 1250,
-            "title_marauder": 1500,
-            "title_archon": 1750,
-            "title_legend": 2000,
-            "title_oracle": 2250,
-            "title_phantom": 2500,
-            "title_overlord": 2750,
-            "title_sovereign": 3000,
-            "title_immortal": 3250,
+            "title_wanderer": TitleEffect(daily_bonus_amount=10),
+            "title_pioneer": TitleEffect(slot_bonus_bp=125),
+            "title_hawk": TitleEffect(basket_bonus_bp=125),
+            "title_shadow": TitleEffect(loss_refund_bp=200),
+            "title_marauder": TitleEffect(protection_discount_bp=1000),
+            "title_archon": TitleEffect(daily_bonus_amount=15, protection_discount_bp=500),
+            "title_legend": TitleEffect(slot_bonus_bp=200, daily_bonus_amount=10),
+            "title_oracle": TitleEffect(basket_bonus_bp=200, daily_bonus_amount=10),
+            "title_phantom": TitleEffect(slot_bonus_bp=100, loss_refund_bp=300),
+            "title_overlord": TitleEffect(basket_bonus_bp=100, protection_discount_bp=1500),
+            "title_sovereign": TitleEffect(slot_bonus_bp=150, basket_bonus_bp=150),
+            "title_immortal": TitleEffect(
+                slot_bonus_bp=200,
+                basket_bonus_bp=200,
+                loss_refund_bp=100,
+                daily_bonus_amount=15,
+            ),
         }
     )
 

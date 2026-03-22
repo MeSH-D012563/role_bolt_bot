@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections import defaultdict
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 
@@ -11,9 +12,11 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BotCommand, ChatPermissions
 
 from bot.config import load_settings
-from bot.database import Database, utc_now
+from bot.database import Database, parse_datetime, utc_now
 from bot.middlewares import DbMiddleware, MuteMiddleware, RateLimitMiddleware, SettingsMiddleware, StartGateMiddleware
 from bot.handlers import start, games, profile, tops, help, shop, pay, daily, titles
+from bot.services.shop import calculate_title_tax, get_title_text, pick_confiscation_title
+from bot.services.timefmt import format_duration
 
 
 async def on_startup(bot: Bot) -> None:
@@ -185,6 +188,161 @@ async def duel_cleanup_loop(bot: Bot, db: Database, interval: int, ttl_seconds: 
         await asyncio.sleep(interval)
 
 
+async def _safe_notify_title_tax(bot: Bot, user_id: int, text: str) -> None:
+    try:
+        await bot.send_message(user_id, text)
+    except Exception:
+        pass
+
+
+async def title_tax_loop(bot: Bot, db: Database, settings, interval: int) -> None:
+    while True:
+        try:
+            users = {user.user_id: user for user in await db.get_users_for_title_tax()}
+            ownerships = await db.get_all_title_ownerships()
+            states = {state.user_id: state for state in await db.get_all_title_tax_states()}
+            titles_by_user: dict[int, list[str]] = defaultdict(list)
+            for owner_id, title_id in ownerships:
+                titles_by_user[owner_id].append(title_id)
+
+            now_dt = datetime.now(timezone.utc)
+            now_iso = now_dt.isoformat()
+            all_user_ids = set(users) | set(titles_by_user) | set(states)
+
+            for user_id in all_user_ids:
+                user = users.get(user_id)
+                if user is None:
+                    continue
+                title_ids = titles_by_user.get(user_id, [])
+                state = states.get(user_id)
+
+                if state and state.debt_amount > 0:
+                    if not title_ids:
+                        await db.clear_title_tax_debt(user_id, last_charged_at=now_iso)
+                        continue
+
+                    if await db.try_withdraw(user_id, state.debt_amount):
+                        await db.clear_title_tax_debt(user_id, last_charged_at=now_iso)
+                        await _safe_notify_title_tax(
+                            bot,
+                            user_id,
+                            "✅ Долг по титульному налогу погашен автоматически.\n"
+                            "Эффекты титулов снова активны.",
+                        )
+                        continue
+
+                    debt_started_dt = parse_datetime(state.debt_started_at)
+                    if debt_started_dt is None:
+                        await db.upsert_title_tax_state(
+                            user_id,
+                            last_charged_at=state.last_charged_at,
+                            debt_amount=state.debt_amount,
+                            debt_started_at=now_iso,
+                        )
+                        continue
+
+                    if (now_dt - debt_started_dt).total_seconds() < settings.title_tax_grace_seconds:
+                        continue
+
+                    if len(title_ids) <= 1:
+                        continue
+
+                    confiscated_title_id = pick_confiscation_title(
+                        settings,
+                        title_ids,
+                        user.active_title_id,
+                    )
+                    if confiscated_title_id is None:
+                        continue
+
+                    sale = await db.get_title_sale(confiscated_title_id)
+                    if sale is not None:
+                        try:
+                            await bot.delete_message(sale.chat_id, sale.message_id)
+                        except Exception:
+                            pass
+
+                    async with db.transaction() as conn:
+                        await conn.execute(
+                            "DELETE FROM title_sales WHERE title_id = ?",
+                            (confiscated_title_id,),
+                        )
+                        await conn.execute(
+                            "DELETE FROM title_ownership WHERE title_id = ? AND owner_id = ?",
+                            (confiscated_title_id, user_id),
+                        )
+                        await conn.execute(
+                            """
+                            UPDATE users SET active_title_id = NULL, updated_at = ?
+                            WHERE user_id = ? AND active_title_id = ?
+                            """,
+                            (now_iso, user_id, confiscated_title_id),
+                        )
+                        await conn.execute(
+                            """
+                            INSERT INTO title_tax_state (
+                                user_id, last_charged_at, debt_amount, debt_started_at, created_at, updated_at
+                            )
+                            VALUES (?, ?, 0, NULL, ?, ?)
+                            ON CONFLICT(user_id)
+                            DO UPDATE SET
+                                last_charged_at = excluded.last_charged_at,
+                                debt_amount = 0,
+                                debt_started_at = NULL,
+                                updated_at = excluded.updated_at
+                            """,
+                            (user_id, now_iso, now_iso, now_iso),
+                        )
+
+                    confiscated_title_name = get_title_text(settings, confiscated_title_id) or confiscated_title_id
+                    await _safe_notify_title_tax(
+                        bot,
+                        user_id,
+                        "⚠️ Долг по титульному налогу не был погашен вовремя.\n"
+                        f"Изъят титул: {confiscated_title_name}.\n"
+                        "Долг закрыт, отсчёт налога начнётся заново через 24 часа.",
+                    )
+                    continue
+
+                tax_amount = calculate_title_tax(settings, title_ids)
+                if tax_amount <= 0:
+                    continue
+
+                last_charged_dt = parse_datetime(state.last_charged_at) if state else None
+                if last_charged_dt is not None and (
+                    now_dt - last_charged_dt
+                ).total_seconds() < settings.title_tax_period_seconds:
+                    continue
+
+                if await db.try_withdraw(user_id, tax_amount):
+                    await db.upsert_title_tax_state(
+                        user_id,
+                        last_charged_at=now_iso,
+                        debt_amount=0,
+                        debt_started_at=None,
+                    )
+                    continue
+
+                await db.upsert_title_tax_state(
+                    user_id,
+                    last_charged_at=now_iso,
+                    debt_amount=tax_amount,
+                    debt_started_at=now_iso,
+                )
+                await _safe_notify_title_tax(
+                    bot,
+                    user_id,
+                    "⚠️ Не удалось списать титульный налог.\n"
+                    f"Сумма долга: {tax_amount} {settings.currency}.\n"
+                    f"Льготный период: {format_duration(settings.title_tax_grace_seconds)}.\n"
+                    "Пока долг не погашен, эффекты титулов отключены.\n"
+                    "Если долг не будет закрыт вовремя, бот заберёт один неактивный титул.",
+                )
+        except Exception:
+            pass
+        await asyncio.sleep(interval)
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
 
@@ -236,6 +394,14 @@ async def main() -> None:
             settings.duel_ttl_seconds,
         )
     )
+    title_tax_task = asyncio.create_task(
+        title_tax_loop(
+            bot,
+            db,
+            settings,
+            settings.title_tax_check_interval_seconds,
+        )
+    )
     try:
         await on_startup(bot)
         await dp.start_polling(bot)
@@ -243,10 +409,12 @@ async def main() -> None:
         cleanup_bans_task.cancel()
         cleanup_mutes_task.cancel()
         cleanup_duels_task.cancel()
+        title_tax_task.cancel()
         with suppress(asyncio.CancelledError):
             await cleanup_bans_task
             await cleanup_mutes_task
             await cleanup_duels_task
+            await title_tax_task
         await db.close()
 
 

@@ -80,6 +80,16 @@ class TitleSale:
     created_at: str
 
 
+@dataclass
+class TitleTaxState:
+    user_id: int
+    last_charged_at: str | None
+    debt_amount: int
+    debt_started_at: str | None
+    created_at: str
+    updated_at: str
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -213,6 +223,19 @@ class Database:
                 expires_at TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 PRIMARY KEY(user_id, protection_id),
+                FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+            )
+            """
+        )
+        await self.execute(
+            """
+            CREATE TABLE IF NOT EXISTS title_tax_state (
+                user_id INTEGER PRIMARY KEY,
+                last_charged_at TEXT,
+                debt_amount INTEGER NOT NULL DEFAULT 0,
+                debt_started_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
                 FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
             )
             """
@@ -441,6 +464,12 @@ class Database:
             (title_id, owner_id, utc_now()),
         )
 
+    async def remove_title_ownership(self, title_id: str, owner_id: int) -> None:
+        await self.execute(
+            "DELETE FROM title_ownership WHERE title_id = ? AND owner_id = ?",
+            (title_id, owner_id),
+        )
+
     async def get_title_sale(self, title_id: str) -> TitleSale | None:
         row = await self.fetchone(
             """
@@ -479,6 +508,94 @@ class Database:
 
     async def remove_title_sale(self, title_id: str) -> None:
         await self.execute("DELETE FROM title_sales WHERE title_id = ?", (title_id,))
+
+    async def get_all_title_ownerships(self) -> list[tuple[int, str]]:
+        rows = await self.fetchall(
+            """
+            SELECT owner_id, title_id
+            FROM title_ownership
+            ORDER BY owner_id, purchased_at
+            """
+        )
+        return [(int(row["owner_id"]), row["title_id"]) for row in rows]
+
+    async def get_title_tax_state(self, user_id: int) -> TitleTaxState | None:
+        row = await self.fetchone(
+            """
+            SELECT user_id, last_charged_at, debt_amount, debt_started_at, created_at, updated_at
+            FROM title_tax_state
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+        if row is None:
+            return None
+        return TitleTaxState(**dict(row))
+
+    async def get_all_title_tax_states(self) -> list[TitleTaxState]:
+        rows = await self.fetchall(
+            """
+            SELECT user_id, last_charged_at, debt_amount, debt_started_at, created_at, updated_at
+            FROM title_tax_state
+            """
+        )
+        return [TitleTaxState(**dict(row)) for row in rows]
+
+    async def upsert_title_tax_state(
+        self,
+        user_id: int,
+        *,
+        last_charged_at: str | None,
+        debt_amount: int,
+        debt_started_at: str | None,
+    ) -> None:
+        now = utc_now()
+        await self.execute(
+            """
+            INSERT INTO title_tax_state (
+                user_id,
+                last_charged_at,
+                debt_amount,
+                debt_started_at,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id)
+            DO UPDATE SET
+                last_charged_at = excluded.last_charged_at,
+                debt_amount = excluded.debt_amount,
+                debt_started_at = excluded.debt_started_at,
+                updated_at = excluded.updated_at
+            """,
+            (user_id, last_charged_at, debt_amount, debt_started_at, now, now),
+        )
+
+    async def clear_title_tax_debt(self, user_id: int, *, last_charged_at: str | None = None) -> None:
+        current = await self.get_title_tax_state(user_id)
+        effective_last_charged_at = last_charged_at
+        if effective_last_charged_at is None:
+            effective_last_charged_at = current.last_charged_at if current else None
+        await self.upsert_title_tax_state(
+            user_id,
+            last_charged_at=effective_last_charged_at,
+            debt_amount=0,
+            debt_started_at=None,
+        )
+
+    async def get_users_for_title_tax(self) -> list[User]:
+        rows = await self.fetchall(
+            """
+            SELECT user_id, username, balance, total_lost, total_won, active_title_id, last_cash_claimed_at
+            FROM users
+            WHERE user_id IN (
+                SELECT owner_id FROM title_ownership
+                UNION
+                SELECT user_id FROM title_tax_state
+            )
+            """
+        )
+        return [User(**dict(row)) for row in rows]
 
     # Protections
     async def get_protections(self, user_id: int) -> list[Protection]:

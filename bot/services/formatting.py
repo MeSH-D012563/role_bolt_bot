@@ -43,4 +43,4 @@ def format_percent_bp(bp: int) -> str:
     if frac == 0:
         return f"{whole}%"
     value = bp / 100
-    return f"{value:.1f}%".rstrip("0").rstrip(".")
+    return f"{value:.2f}".rstrip("0").rstrip(".") + "%"

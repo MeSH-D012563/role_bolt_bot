@@ -8,12 +8,12 @@ from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, Message
 
-from bot.config import Settings
+from bot.config import Settings, TitleEffect
 from bot.database import Database, Duel, utc_now
 from bot.keyboards import basket_actions_keyboard, duel_accept_keyboard
 from bot.services.formatting import format_percent_bp, format_user, format_username
-from bot.services.games import basket_is_success, calc_payout, evaluate_slot
-from bot.services.shop import get_title_bonus_bp, get_title_text
+from bot.services.games import basket_is_success, calc_bonus_amount, calc_payout, calc_refund, evaluate_slot
+from bot.services.shop import get_title_effect, get_title_text
 
 router = Router()
 
@@ -46,12 +46,22 @@ def bet_range_text(settings: Settings) -> str:
     return f"{settings.min_bet}–{settings.max_bet} {settings.currency}"
 
 
-async def get_title_context(db: Database, settings: Settings, user_id: int) -> tuple[str | None, int]:
+async def get_title_context(
+    db: Database,
+    settings: Settings,
+    user_id: int,
+) -> tuple[str | None, TitleEffect]:
     user = await db.get_user(user_id)
     if user is None:
-        return None, 0
+        return None, TitleEffect()
     title_id = user.active_title_id
-    return get_title_text(settings, title_id), get_title_bonus_bp(settings, title_id)
+    tax_state = await db.get_title_tax_state(user_id)
+    effects_enabled = tax_state is None or tax_state.debt_amount <= 0
+    return get_title_text(settings, title_id), get_title_effect(
+        settings,
+        title_id,
+        effects_enabled=effects_enabled,
+    )
 
 
 def reply_kwargs(reply_to_message_id: int | None) -> dict:
@@ -85,7 +95,7 @@ async def cmd_slot(message: Message, command: CommandObject, db: Database, setti
         await message.answer("Недостаточно средств для ставки. Баланс — /profile.")
         return
 
-    title_text, bonus_bp = await get_title_context(db, settings, message.from_user.id)
+    title_text, title_effect = await get_title_context(db, settings, message.from_user.id)
     player_label = "Ты" if message.chat.type == "private" else format_user(message.from_user, title_text)
 
     dice_msg = await message.answer_dice(emoji="🎰")
@@ -94,23 +104,25 @@ async def cmd_slot(message: Message, command: CommandObject, db: Database, setti
     value = dice_msg.dice.value
     multiplier_bp, label = evaluate_slot(value, settings)
     if multiplier_bp <= 0:
+        refund = calc_refund(bet, title_effect.loss_refund_bp)
+        net_loss = max(bet - refund, 0)
         async with db.transaction() as conn:
             now = utc_now()
             await conn.execute(
-                "UPDATE users SET total_lost = total_lost + ?, updated_at = ? WHERE user_id = ?",
-                (bet, now, message.from_user.id),
+                "UPDATE users SET balance = balance + ?, total_lost = total_lost + ?, updated_at = ? WHERE user_id = ?",
+                (refund, net_loss, now, message.from_user.id),
             )
-        await message.answer(
-            f"🎰 {label}\n"
-            f"{player_label} проиграл {bet} {settings.currency}.",
-            **reply_kwargs(reply_to),
-        )
+        lines = [
+            f"🎰 {label}",
+            f"{player_label} проиграл {net_loss} {settings.currency}.",
+        ]
+        if refund > 0:
+            lines.append(f"Возврат титула: {refund} {settings.currency}")
+        await message.answer("\n".join(lines), **reply_kwargs(reply_to))
         return
 
     base_payout = calc_payout(bet, multiplier_bp)
-    bonus_amount = 0
-    if bonus_bp > 0:
-        bonus_amount = (base_payout * bonus_bp) // 10000
+    bonus_amount = calc_bonus_amount(base_payout, title_effect.slot_bonus_bp)
     payout = base_payout + bonus_amount
     profit = max(payout - bet, 0)
     async with db.transaction() as conn:
@@ -124,9 +136,9 @@ async def cmd_slot(message: Message, command: CommandObject, db: Database, setti
         f"🎰 {label}",
         f"{player_label} выиграл.",
     ]
-    if bonus_bp > 0 and bonus_amount > 0:
+    if title_effect.slot_bonus_bp > 0 and bonus_amount > 0:
         lines.append(
-            f"Бонус титула: +{format_percent_bp(bonus_bp)} (+{bonus_amount} {settings.currency})"
+            f"Бонус титула: +{format_percent_bp(title_effect.slot_bonus_bp)} (+{bonus_amount} {settings.currency})"
         )
     lines.append(f"Выплата: {payout} {settings.currency}")
     lines.append(f"Прибыль: {profit} {settings.currency}.")
@@ -503,7 +515,7 @@ async def play_basket_turn(
         await message.answer("Подожди завершения предыдущего броска", **reply_kwargs(reply_to_message_id))
         return
 
-    title_text, bonus_bp = await get_title_context(db, settings, user_id)
+    title_text, title_effect = await get_title_context(db, settings, user_id)
     player_label = "Ты" if message.chat.type == "private" else format_user(message.from_user, title_text)
 
     try:
@@ -513,16 +525,14 @@ async def play_basket_turn(
         value = dice_msg.dice.value
         if basket_is_success(value, settings):
             base_bank = calc_payout(game.bank, settings.basket_multiplier_bp)
-            bonus_amount = 0
-            if bonus_bp > 0:
-                bonus_amount = (base_bank * bonus_bp) // 10000
+            bonus_amount = calc_bonus_amount(base_bank, title_effect.basket_bonus_bp)
             new_bank = base_bank + bonus_amount
             await db.update_basket_bank(user_id, new_bank)
             header = "🏀 Попадание!" if message.chat.type == "private" else f"🏀 {player_label} — попадание!"
             lines = [header, f"Банк: {new_bank} {settings.currency}."]
-            if bonus_bp > 0 and bonus_amount > 0:
+            if title_effect.basket_bonus_bp > 0 and bonus_amount > 0:
                 lines.append(
-                    f"Бонус титула: +{format_percent_bp(bonus_bp)} (+{bonus_amount} {settings.currency})"
+                    f"Бонус титула: +{format_percent_bp(title_effect.basket_bonus_bp)} (+{bonus_amount} {settings.currency})"
                 )
             await message.answer(
                 "\n".join(lines),
@@ -531,6 +541,8 @@ async def play_basket_turn(
             )
             return
 
+        refund = calc_refund(game.bet, title_effect.loss_refund_bp)
+        net_loss = max(game.bet - refund, 0)
         async with db.transaction() as conn:
             now = utc_now()
             await conn.execute(
@@ -538,16 +550,16 @@ async def play_basket_turn(
                 (user_id,),
             )
             await conn.execute(
-                "UPDATE users SET total_lost = total_lost + ?, updated_at = ? WHERE user_id = ?",
-                (game.bet, now, user_id),
+                "UPDATE users SET balance = balance + ?, total_lost = total_lost + ?, updated_at = ? WHERE user_id = ?",
+                (refund, net_loss, now, user_id),
             )
-        if message.chat.type == "private":
-            await message.answer("❌ Промах. Банк сгорел.", **reply_kwargs(reply_to_message_id))
-        else:
-            await message.answer(
-                f"❌ {player_label} — промах. Банк сгорел.",
-                **reply_kwargs(reply_to_message_id),
-            )
+        lines = [
+            "❌ Промах. Банк сгорел." if message.chat.type == "private" else f"❌ {player_label} — промах. Банк сгорел.",
+            f"Потеря: {net_loss} {settings.currency}.",
+        ]
+        if refund > 0:
+            lines.append(f"Возврат титула: {refund} {settings.currency}")
+        await message.answer("\n".join(lines), **reply_kwargs(reply_to_message_id))
     finally:
         await db.unlock_basket(user_id)
 

@@ -64,3 +64,15 @@ def basket_is_success(value: int, settings: Settings) -> bool:
 
 def calc_payout(bet: int, multiplier_bp: int) -> int:
     return (bet * multiplier_bp) // 100
+
+
+def calc_bonus_amount(amount: int, bonus_bp: int) -> int:
+    if amount <= 0 or bonus_bp <= 0:
+        return 0
+    return (amount * bonus_bp) // 10000
+
+
+def calc_refund(amount: int, refund_bp: int) -> int:
+    if amount <= 0 or refund_bp <= 0:
+        return 0
+    return (amount * refund_bp) // 10000

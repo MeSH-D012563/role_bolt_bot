@@ -49,6 +49,13 @@ async def _delete_sale_message(bot, sale) -> None:
         pass
 
 
+async def get_title_tax_debt_amount(db: Database, user_id: int) -> int:
+    state = await db.get_title_tax_state(user_id)
+    if state is None or state.debt_amount <= 0:
+        return 0
+    return state.debt_amount
+
+
 @router.message(Command("sell_title"))
 async def cmd_sell_title(message: Message, command: CommandObject, db: Database, settings: Settings) -> None:
     if message.chat.type == "private":
@@ -113,6 +120,17 @@ async def cmd_gift_title(message: Message, db: Database, settings: Settings) -> 
         return
     if not await db.user_exists(target.id):
         await message.answer("У получателя нет профиля. Ему нужно написать /start")
+        return
+
+    sender_debt = await get_title_tax_debt_amount(db, message.from_user.id)
+    if sender_debt > 0:
+        await message.answer(
+            f"Сначала погаси долг по титульному налогу: {sender_debt} {settings.currency}."
+        )
+        return
+    target_debt = await get_title_tax_debt_amount(db, target.id)
+    if target_debt > 0:
+        await message.answer("Получатель не может принять титул, пока у него есть долг по титульному налогу.")
         return
 
     user = await db.get_user(message.from_user.id)
@@ -194,6 +212,14 @@ async def title_buy_callback(callback, db: Database, settings: Settings) -> None
 
     if not await db.user_exists(callback.from_user.id):
         await callback.answer("Сначала создай профиль через /start", show_alert=True)
+        return
+
+    buyer_debt = await get_title_tax_debt_amount(db, callback.from_user.id)
+    if buyer_debt > 0:
+        await callback.answer(
+            f"Сначала погаси долг по титульному налогу: {buyer_debt} {settings.currency}.",
+            show_alert=True,
+        )
         return
 
     owner = await db.get_title_owner(title_id)
